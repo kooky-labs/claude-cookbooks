@@ -33,7 +33,9 @@ VOLUME_NAME = "research-agent-sessions"
 BUILD_CONTEXT = Path(__file__).resolve().parents[2]
 DOCKERFILE = BUILD_CONTEXT / "hosting" / "Dockerfile"
 
-app = modal.App(APP_NAME)
+# Sandboxes created from a driver script need a *registered* app, not a local
+# ``modal.App(...)`` object — ``lookup`` registers it server-side on first run.
+app = modal.App.lookup(APP_NAME, create_if_missing=True)
 
 image = modal.Image.from_dockerfile(
     str(DOCKERFILE),
@@ -50,8 +52,10 @@ def deploy() -> None:
     auth_token = secrets.token_urlsafe(32)
 
     with modal.enable_output():
+        # The image's ENTRYPOINT is ./hosting/entrypoint.sh; like compose's
+        # `command: ["serve"]`, this arg is appended to it, not run in place
+        # of it.
         sandbox = modal.Sandbox.create(
-            "./hosting/entrypoint.sh",
             "serve",
             app=app,
             image=image,

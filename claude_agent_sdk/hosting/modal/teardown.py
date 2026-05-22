@@ -21,11 +21,8 @@ def main() -> None:
         print(f"terminating sandbox {sandbox.object_id}")
         sandbox.terminate()
 
-    try:
-        modal.Volume.delete(VOLUME_NAME)
-        print(f"deleted volume {VOLUME_NAME}")
-    except modal.exception.NotFoundError:
-        pass
+    modal.Volume.objects.delete(VOLUME_NAME, allow_missing=True)
+    print(f"deleted volume {VOLUME_NAME}")
 
 
 if __name__ == "__main__":

@@ -24,8 +24,13 @@ same as local), starts a sandbox running `serve`, and prints a tunnel URL.
 
 ## Talk to it
 
+The deploy script prints a `url:` and a `token:` line. The tunnel URL is public,
+so the server requires the bearer token on the messages endpoint (only
+`/health` is open):
+
 ```bash
 curl -N -X POST "$MODAL_URL/sessions/demo-1/messages" \
+  -H "Authorization: Bearer $MODAL_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"prompt":"What are the latest AI agent trends?"}'
 ```

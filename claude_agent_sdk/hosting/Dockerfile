@@ -36,10 +36,11 @@ COPY hosting/server.py hosting/run_once.py hosting/entrypoint.sh ./hosting/
 RUN chmod +x hosting/entrypoint.sh \
  && touch hosting/__init__.py
 
-# Redirect session storage to /data and declare it a volume so an orchestrator
-# can mount something persistent there.
+# Redirect session storage to /data. Each tier mounts something persistent
+# there explicitly (compose bind mount, modal.Volume, k8s PVC) — no VOLUME
+# instruction here because Modal's image builder rejects it, and an unmounted
+# VOLUME would just leak anonymous volumes under plain `docker run` anyway.
 ENV CLAUDE_CONFIG_DIR=/data
-VOLUME /data
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
