@@ -92,6 +92,17 @@ kubectl -n claude-agent create secret generic anthropic-api-key \
     --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
     --dry-run=client -o yaml | kubectl apply -f -
 
+# Two demo tenants so you can watch the gateway enforce session ownership:
+# alice can read/continue/delete her sessions, bob gets a 403 on them.
+# Note: the gateway reads this at pod start — if you re-run this script
+# against an existing cluster, `kubectl -n claude-agent rollout restart
+# deploy/gateway` to pick up the regenerated tokens.
+ALICE_TOKEN=$(openssl rand -hex 16)
+BOB_TOKEN=$(openssl rand -hex 16)
+kubectl -n claude-agent create secret generic gateway-tenants \
+    --from-literal=GATEWAY_TENANTS="${ALICE_TOKEN}:alice,${BOB_TOKEN}:bob" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl -n claude-agent create secret generic egress-proxy-tls \
     --from-file=ca.crt=certs/ca.crt \
     --from-file=proxy.crt=certs/proxy.crt \
@@ -125,13 +136,27 @@ PF_PID=$!
 trap 'kill "$PF_PID" 2>/dev/null || true' EXIT INT TERM
 sleep 2
 
-cat <<'EOF'
+cat <<EOF
 
-  Try it:
+  Two demo tenants are configured. Sessions belong to whichever tenant
+  creates them:
 
-    curl -N -X POST http://localhost:8080/sessions/demo/messages \
-      -H 'Content-Type: application/json' \
+    alice  $ALICE_TOKEN
+    bob    $BOB_TOKEN
+
+  Try it as alice:
+
+    curl -N -X POST http://localhost:8080/sessions/demo/messages \\
+      -H 'Authorization: Bearer $ALICE_TOKEN' \\
+      -H 'Content-Type: application/json' \\
       -d '{"prompt": "Hello from Tier 3"}'
+
+  Now hit alice's session with bob's token — the gateway returns 403:
+
+    curl -X POST http://localhost:8080/sessions/demo/messages \\
+      -H 'Authorization: Bearer $BOB_TOKEN' \\
+      -H 'Content-Type: application/json' \\
+      -d '{"prompt": "let me in"}'
 
   Watch pods come and go:
 

@@ -93,11 +93,15 @@ spec:
                                 key: STANDBY_POOL_SIZE
                       - name: IDLE_TIMEOUT_S
                         value: "900"
-                      - name: GATEWAY_AUTH_TOKEN
+                      # token→tenant map ("tokenA:alice,tokenB:bob"). Sessions are
+                      # scoped to the tenant that created them. Optional so the
+                      # manifest applies before the secret exists, but don't run
+                      # without it anywhere other callers can reach.
+                      - name: GATEWAY_TENANTS
                         valueFrom:
                             secretKeyRef:
-                                name: gateway-auth
-                                key: GATEWAY_AUTH_TOKEN
+                                name: gateway-tenants
+                                key: GATEWAY_TENANTS
                                 optional: true
                   startupProbe:
                       httpGet:

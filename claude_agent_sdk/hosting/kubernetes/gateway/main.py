@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -51,10 +52,14 @@ IDLE_TIMEOUT_S = int(os.getenv("IDLE_TIMEOUT_S", "900"))
 # provisioning the same session's pod (see _ensure_session_pod).
 PROVISION_TIMEOUT_S = 180
 
-# Optional shared-secret bearer token.  If set, every request (except /health)
-# must present ``Authorization: Bearer <token>``.  Replace with your IdP in
-# production — see "What this doesn't give you" in the README.
-GATEWAY_AUTH_TOKEN = os.getenv("GATEWAY_AUTH_TOKEN") or None
+# Static bearer-token → tenant map, e.g. ``GATEWAY_TENANTS="tokenA:alice,tokenB:bob"``.
+# Every request (except /health) must present ``Authorization: Bearer <token>``
+# for one of these entries; the matching tenant becomes the caller's identity
+# and sessions are scoped to it.  Unset = no auth and a single shared tenant —
+# acceptable only for local poking, never for anything reachable by others.
+_TOKEN_TO_TENANT: dict[str, str] = dict(
+    pair.split(":", 1) for pair in os.getenv("GATEWAY_TENANTS", "").split(",") if ":" in pair
+)
 
 # Session IDs must match this pattern to prevent path traversal / label abuse.
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -100,16 +105,23 @@ app = FastAPI(title="Claude Agent Gateway (k8s)", lifespan=lifespan)
 def authenticate(request: Request) -> str:
     """Return the caller's tenant id.  Swap this for your IdP.
 
-    The cookbook ships a static bearer token (or no auth at all if
-    ``GATEWAY_AUTH_TOKEN`` is unset) and a single hard-coded tenant.  A real
-    deployment validates an OIDC/JWT/mTLS credential here and returns the
-    caller's tenant so different tenants can't guess each other's session IDs.
+    The demo enforces tenant isolation: each bearer token in ``GATEWAY_TENANTS``
+    maps to a tenant, every session is owned by the tenant that created it, and
+    a caller presenting another tenant's token gets a 403.  What's *not* real is
+    the credential itself — a static token map with no issuance, rotation, or
+    revocation.  A production deployment validates an OIDC/JWT/mTLS credential
+    here and derives the tenant from its claims; the ownership checks downstream
+    stay exactly the same.
     """
-    if GATEWAY_AUTH_TOKEN:
-        auth = request.headers.get("authorization", "")
-        if auth != f"Bearer {GATEWAY_AUTH_TOKEN}":
-            raise HTTPException(status_code=401, detail="unauthorized")
-    return "cookbook"
+    if not _TOKEN_TO_TENANT:
+        return "anonymous"  # GATEWAY_TENANTS unset — open access, single tenant
+    auth = request.headers.get("authorization", "")
+    presented = auth.removeprefix("Bearer ") if auth.startswith("Bearer ") else ""
+    # compare_digest over every entry so the lookup isn't a timing oracle.
+    for token, tenant in _TOKEN_TO_TENANT.items():
+        if secrets.compare_digest(presented, token):
+            return tenant
+    raise HTTPException(status_code=401, detail="unauthorized")
 
 
 # ---------------------------------------------------------------------------
@@ -126,19 +138,38 @@ async def health():
 # Session → pod mapping
 # ---------------------------------------------------------------------------
 
-async def _ensure_session_pod(session_id: str) -> str:
+async def _owned_pod_ip(session_id: str, tenant: str) -> str | None:
+    """Return the session's pod IP if it exists and belongs to ``tenant``.
+
+    ``None`` means the session doesn't exist yet — the caller may create it
+    and becomes its owner.  403 if it exists but was created by a different
+    tenant: this is the ownership check the gateway exists to enforce, and
+    it runs on *every* lookup, not just at creation time.
+    """
+    data = await redis_client.hgetall(f"session:{session_id}")
+    if not data:
+        return None
+    if data.get("tenant") != tenant:
+        raise HTTPException(status_code=403, detail="session belongs to another tenant")
+    return data.get("pod_ip")
+
+
+async def _ensure_session_pod(session_id: str, tenant: str) -> str:
     """Look up or provision the pod for a session.  Returns its IP.
 
-    Redis hash ``session:{id}`` is the source of truth for routing.  If we
-    don't know a pod yet, claim or create one via k8s.py and record it.
+    Redis hash ``session:{id}`` is the source of truth for routing *and*
+    ownership: the tenant that first POSTs to a ``session_id`` is recorded as
+    its owner, and every subsequent lookup re-checks that the caller matches.
 
     A per-session ``SET NX`` lock guards provisioning: without it, a client
     retry that lands while the first request is still waiting for the pod
     would claim a *second* pod for the same session and leak it until the
     idle reaper runs.  The loser of the race waits for the winner's mapping
-    to appear instead.
+    to appear instead — and then still goes through the ownership check, so
+    two tenants racing to create the same ``session_id`` can't end up sharing
+    a pod.
     """
-    pod_ip = await redis_client.hget(f"session:{session_id}", "pod_ip")
+    pod_ip = await _owned_pod_ip(session_id, tenant)
     if pod_ip:
         return pod_ip
 
@@ -147,7 +178,7 @@ async def _ensure_session_pod(session_id: str) -> str:
     if not got_lock:
         for _ in range(PROVISION_TIMEOUT_S):
             await asyncio.sleep(1)
-            pod_ip = await redis_client.hget(f"session:{session_id}", "pod_ip")
+            pod_ip = await _owned_pod_ip(session_id, tenant)
             if pod_ip:
                 return pod_ip
         raise HTTPException(
@@ -161,6 +192,7 @@ async def _ensure_session_pod(session_id: str) -> str:
             f"session:{session_id}",
             mapping={
                 "id": session_id,
+                "tenant": tenant,
                 "status": "active",
                 "pod_ip": pod_ip,
                 "created_at": now,
@@ -181,17 +213,18 @@ async def _ensure_session_pod(session_id: str) -> str:
 async def post_message(
     session_id: str,
     request: Request,
-    _tenant: str = Depends(authenticate),
+    tenant: str = Depends(authenticate),
 ):
     """Forward a turn to the session's agent pod and stream SSE back.
 
     Same path and shape as ``hosting/server.py`` (Tier 1/2), so client code
     written against the Docker or Modal tier works unchanged here — only the
-    base URL moves.
+    base URL moves.  The first POST on a ``session_id`` makes the caller's
+    tenant its owner; other tenants get a 403 from then on.
     """
     _validate_session_id(session_id)
     body = await request.json()
-    pod_ip = await _ensure_session_pod(session_id)
+    pod_ip = await _ensure_session_pod(session_id, tenant)
     await redis_client.hset(
         f"session:{session_id}", "last_activity", datetime.now(UTC).isoformat()
     )
@@ -209,7 +242,7 @@ async def post_message(
         await delete_agent_pod(session_id)
         await redis_client.delete(f"session:{session_id}")
         await redis_client.srem("sessions:active", session_id)
-        pod_ip = await _ensure_session_pod(session_id)
+        pod_ip = await _ensure_session_pod(session_id, tenant)
         stream = await relay_sse(pod_ip, session_id, body)
     return StreamingResponse(stream, media_type="text/event-stream")
 
@@ -217,10 +250,16 @@ async def post_message(
 @app.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: str,
-    _tenant: str = Depends(authenticate),
+    tenant: str = Depends(authenticate),
 ):
-    """Delete the session's pod and forget the mapping."""
+    """Delete the session's pod and forget the mapping.
+
+    Owner-only: deleting someone else's session is just as much a breach as
+    reading it.  Deleting a session that doesn't exist is a 200 no-op so
+    clients can retry without special-casing.
+    """
     _validate_session_id(session_id)
+    await _owned_pod_ip(session_id, tenant)  # 403 unless caller owns it (or it's absent)
     await delete_agent_pod(session_id)
     await redis_client.delete(f"session:{session_id}")
     await redis_client.srem("sessions:active", session_id)

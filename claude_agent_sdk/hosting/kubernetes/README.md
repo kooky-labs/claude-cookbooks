@@ -84,14 +84,23 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 This builds the three images, loads them into a local `kind` cluster, applies
-every manifest, and port-forwards the gateway to `localhost:8080`.
+every manifest, and port-forwards the gateway to `localhost:8080`. It also
+generates bearer tokens for two demo tenants (`alice` and `bob`) and prints
+them at the end — export the one you want to use:
+
+```bash
+export ALICE_TOKEN=...   # printed by kind-quickstart.sh
+export BOB_TOKEN=...
+```
 
 ## Talk to it
 
-Same path and shape as Tier 1/2 — only the base URL changes:
+Same path and shape as Tier 1/2 — the base URL changes, and the gateway now
+requires a bearer token that identifies the calling tenant:
 
 ```bash
 curl -N -X POST http://localhost:8080/sessions/demo/messages \
+  -H "Authorization: Bearer $ALICE_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"prompt": "What tools do you have?"}'
 ```
@@ -100,6 +109,14 @@ The first request on a new `session_id` claims a standby pod (or spawns one if
 the pool is empty). Subsequent requests with the same `session_id` route to the
 same pod, so the agent sees a continuous conversation.
 
+The session now belongs to `alice` — the gateway records the creating tenant in
+Redis and checks it on every subsequent request. The same call with
+`$BOB_TOKEN` returns `403 {"detail":"session belongs to another tenant"}`, and
+no token at all returns `401`. The tenant map is a static
+`token:tenant,token:tenant` string in the `gateway-tenants` secret; swap the
+`authenticate()` stub in [`gateway/main.py`](./gateway/main.py) for your IdP to
+derive the tenant from a real credential instead.
+
 Watch the machinery work:
 
 ```bash
@@ -107,10 +124,12 @@ kubectl -n claude-agent get pods -w
 # you'll see agent-standby-* pods appear, then one flip to active when you curl
 ```
 
-To end a session, go through the gateway so the Redis mapping is cleaned up:
+To end a session, go through the gateway so the Redis mapping is cleaned up
+(owner-only, like every other session operation):
 
 ```bash
-curl -X DELETE http://localhost:8080/sessions/demo
+curl -X DELETE http://localhost:8080/sessions/demo \
+  -H "Authorization: Bearer $ALICE_TOKEN"
 ```
 
 (`kubectl delete pod` works too, but leaves a stale `session → pod-IP` entry
@@ -142,10 +161,10 @@ was already proven by the curl above returning model output.
 ## Standby pool
 
 `STANDBY_POOL_SIZE` (in the `agent-config` ConfigMap) controls how many warm
-pods the gateway keeps ready. Check current state:
+pods the gateway keeps ready. Check current state (any valid tenant token):
 
 ```bash
-curl http://localhost:8080/api/pool
+curl http://localhost:8080/api/pool -H "Authorization: Bearer $ALICE_TOKEN"
 ```
 
 ## Persistence
@@ -194,6 +213,8 @@ docker push $REG/agent:latest $REG/gateway:latest $REG/egress-proxy:latest
 kubectl apply -f manifests/namespace.yaml
 kubectl -n claude-agent create secret generic anthropic-api-key \
     --from-literal=ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+kubectl -n claude-agent create secret generic gateway-tenants \
+    --from-literal=GATEWAY_TENANTS="$(openssl rand -hex 16):tenant-a,$(openssl rand -hex 16):tenant-b"
 kubectl -n claude-agent create secret generic egress-proxy-tls \
     --from-file=ca.crt=certs/ca.crt \
     --from-file=proxy.crt=certs/proxy.crt \
@@ -218,14 +239,18 @@ gateway. Three things vary by environment:
   enforces `NetworkPolicy` (Cilium, Calico, GKE Dataplane V2, EKS with the
   VPC CNI policy add-on). On a CNI that ignores it, agent pods can reach the
   internet.
-- **TLS + auth in front of the gateway** — `GATEWAY_AUTH_TOKEN` is a
-  placeholder. Put your IdP / API gateway in front before exposing this
-  publicly.
+- **TLS + auth in front of the gateway** — the static `GATEWAY_TENANTS` token
+  map is a stand-in for real credentials. Put your IdP / API gateway in front
+  before exposing this publicly.
 
 ## What this doesn't give you
 
-- Real authentication or multi-tenancy (the `authenticate()` stub returns one
-  hard-coded tenant)
+- A real identity provider. The gateway *does* enforce per-tenant session
+  ownership — each bearer token in `GATEWAY_TENANTS` maps to a tenant, the
+  creating tenant owns the session, and other tenants get a 403 — but the
+  tokens themselves are a static map with no issuance, rotation, revocation,
+  or per-tenant RBAC. Swap `authenticate()` for your IdP; the ownership
+  checks don't change.
 - Durable session storage (see [Persistence](#persistence))
 - Gateway autoscaling or multi-region routing
 - DNS-level egress control — port 53 stays open to any resolver so node-local
