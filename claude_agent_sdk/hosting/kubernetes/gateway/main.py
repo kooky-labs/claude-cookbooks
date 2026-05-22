@@ -57,8 +57,12 @@ PROVISION_TIMEOUT_S = 180
 # for one of these entries; the matching tenant becomes the caller's identity
 # and sessions are scoped to it.  Unset = no auth and a single shared tenant —
 # acceptable only for local poking, never for anything reachable by others.
+# A pair with an empty token (":alice") is dropped rather than mapped — an
+# empty key would make the empty Authorization header a valid credential.
 _TOKEN_TO_TENANT: dict[str, str] = dict(
-    pair.split(":", 1) for pair in os.getenv("GATEWAY_TENANTS", "").split(",") if ":" in pair
+    pair.split(":", 1)
+    for pair in os.getenv("GATEWAY_TENANTS", "").split(",")
+    if ":" in pair and not pair.startswith(":")
 )
 
 # Session IDs must match this pattern to prevent path traversal / label abuse.
@@ -117,6 +121,8 @@ def authenticate(request: Request) -> str:
         return "anonymous"  # GATEWAY_TENANTS unset — open access, single tenant
     auth = request.headers.get("authorization", "")
     presented = auth.removeprefix("Bearer ") if auth.startswith("Bearer ") else ""
+    if not presented:
+        raise HTTPException(status_code=401, detail="unauthorized")
     # compare_digest over every entry so the lookup isn't a timing oracle.
     for token, tenant in _TOKEN_TO_TENANT.items():
         if secrets.compare_digest(presented, token):
@@ -235,13 +241,14 @@ async def post_message(
             raise
         # The mapped pod is gone (evicted, OOM-killed, node restarted) but the
         # Redis entry outlived it.  Delete the dead pod object (no-op if it's
-        # already gone), drop the stale mapping, and provision a fresh pod once
-        # before giving up — without this, every request on the session keeps
-        # 502ing until the idle reaper happens to clean it up.
+        # already gone), drop only the stale ``pod_ip`` field — keeping the
+        # rest of the hash means the session never becomes ownerless, so no
+        # other tenant can claim the id mid-recovery — and provision a fresh
+        # pod once before giving up.  Without this, every request on the
+        # session keeps 502ing until the idle reaper happens to clean it up.
         logger.warning(f"Stale pod mapping for session {session_id}; reprovisioning")
         await delete_agent_pod(session_id)
-        await redis_client.delete(f"session:{session_id}")
-        await redis_client.srem("sessions:active", session_id)
+        await redis_client.hdel(f"session:{session_id}", "pod_ip")
         pod_ip = await _ensure_session_pod(session_id, tenant)
         stream = await relay_sse(pod_ip, session_id, body)
     return StreamingResponse(stream, media_type="text/event-stream")
@@ -256,10 +263,14 @@ async def delete_session(
 
     Owner-only: deleting someone else's session is just as much a breach as
     reading it.  Deleting a session that doesn't exist is a 200 no-op so
-    clients can retry without special-casing.
+    clients can retry without special-casing — and it must not touch the
+    cluster, or it could kill a pod another tenant is still provisioning
+    (the pod exists before its Redis record does).
     """
     _validate_session_id(session_id)
-    await _owned_pod_ip(session_id, tenant)  # 403 unless caller owns it (or it's absent)
+    if not await redis_client.exists(f"session:{session_id}"):
+        return {"status": "deleted"}  # absent — nothing to do, touch nothing
+    await _owned_pod_ip(session_id, tenant)  # 403 unless the caller owns it
     await delete_agent_pod(session_id)
     await redis_client.delete(f"session:{session_id}")
     await redis_client.srem("sessions:active", session_id)
