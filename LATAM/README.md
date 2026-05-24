@@ -10,8 +10,8 @@ Each recipe walks through one shipped LATAM connector or workflow as a Cookbook-
 
 | # | Title | Status | Article |
 |---|---|---|---|
-| 00 | [The idea](./00-the-idea.md) | live | |
-| 01 | [MercadoPago skill (cards + Pix)](./01-mercadopago-skill.md) | recipe live, skill shipped | [LinkedIn](https://www.linkedin.com/pulse/localizing-claude-small-business-latam-gap-isnt-language-goulart-geuye) |
+| 00 | [The idea](./00-the-idea.md) | live | [Article #1 — Why Claude for Small Business might face slower adoption in LATAM](https://www.linkedin.com/pulse/why-claude-small-business-might-face-slower-adoption-latam-goulart-u1ywe/) |
+| 01 | [MercadoPago skill (cards + Pix)](./01-mercadopago-skill.md) | recipe live, skill shipped | [Article #2 — Localizing Claude for Small Business for LATAM](https://www.linkedin.com/pulse/localizing-claude-small-business-latam-gap-isnt-language-goulart-geuye) |
 | 02 | Conta Azul + NFe issuance | planned (June 2026) | |
 | 03 | WhatsApp Business connector | planned (June 2026) | |
 | 04 | Pix Direct (rail/BCB, vendor-neutral) | planned (June 2026) | |
