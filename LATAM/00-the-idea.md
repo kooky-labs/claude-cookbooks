@@ -22,7 +22,9 @@ Three tests:
 
 ## Connection to the LinkedIn series
 
-There's a [LinkedIn series](https://www.linkedin.com/in/renatogoulart) running in parallel that tells the operator-level story of each build. Different audience (founders, partnership leads, strategy folks), different pacing (one Article per shipped adaptation), different framing (build narrative, market context, vendor-vs-platform-partner thesis).
+There's a LinkedIn series running in parallel that tells the operator-level story of each build. It opened with [Why Claude for Small Business might face slower adoption in LATAM](https://www.linkedin.com/pulse/why-claude-small-business-might-face-slower-adoption-latam-goulart-u1ywe/), which sets up the gap-map this directory is designed to close.
+
+Different audience (founders, partnership leads, strategy folks), different pacing (one Article per shipped adaptation), different framing (build narrative, market context, vendor-vs-platform-partner thesis).
 
 The two are complementary. The LinkedIn pieces explain why a build matters. The recipes here explain how the build actually works. If you want the strategic frame, read the article. If you want the integration code shape, read the recipe.
 
