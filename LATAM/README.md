@@ -2,13 +2,16 @@
 
 LATAM-specific recipes paced behind the [KOOKY OS](https://github.com/kooky-labs) build cycle. This directory is the public companion to a LinkedIn series on adapting Anthropic's *Claude for Small Business* for the LATAM stack.
 
+**Start here:** [00-the-idea.md](./00-the-idea.md) for what this directory is, what makes a good LATAM recipe, and how it connects to the underlying build cycle.
+
 Each recipe walks through one shipped LATAM connector or workflow as a Cookbook-shaped pattern: capability surface, integration shape, sandbox setup, error handling, and the design lessons that aren't obvious from the official docs.
 
 ## Recipes
 
 | # | Title | Status | Article |
 |---|---|---|---|
-| 01 | MercadoPago skill (cards + Pix) | shipped, recipe in progress | [LinkedIn](https://www.linkedin.com/pulse/localizing-claude-small-business-latam-gap-isnt-language-goulart-geuye) |
+| 00 | [The idea](./00-the-idea.md) | live | |
+| 01 | [MercadoPago skill (cards + Pix)](./01-mercadopago-skill.md) | recipe live, skill shipped | [LinkedIn](https://www.linkedin.com/pulse/localizing-claude-small-business-latam-gap-isnt-language-goulart-geuye) |
 | 02 | Conta Azul + NFe issuance | planned (June 2026) | |
 | 03 | WhatsApp Business connector | planned (June 2026) | |
 | 04 | Pix Direct (rail/BCB, vendor-neutral) | planned (June 2026) | |
