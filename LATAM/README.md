@@ -14,7 +14,7 @@ Each recipe walks through one shipped LATAM connector or workflow as a Cookbook-
 | 01 | [MercadoPago skill (cards + Pix)](./01-mercadopago-skill.md) | recipe live, skill shipped | [Article #2 — Localizing Claude for Small Business for LATAM](https://www.linkedin.com/pulse/localizing-claude-small-business-latam-gap-isnt-language-goulart-geuye) |
 | 02 | [Conta Azul skill (accounting + the fiscal-emission boundary)](./02-conta-azul-nfe.md) | recipe live, skill shipped | [Article #3 — My Claude for Small Business got a NO from ContaAzul this week](https://www.linkedin.com/pulse/my-claude-small-business-got-from-contaazul-week-renato-goulart-ohiff) |
 | 03 | [WhatsApp for a sandboxed agent (the host MCP pattern)](./03-whatsapp-business.md) | recipe live, skill shipped | [Article #4 — AI can read your books. Make sure it can't accidentally damage your business](https://www.linkedin.com/pulse/ai-can-read-your-books-make-sure-cant-accidentally-damage-goulart-5eref/) |
-| 04 | Pix Direct (rail/BCB, vendor-neutral) | planned (June 2026) | |
+| 04 | Pix Direct (rail/BCB, vendor-neutral) | skill shipped, recipe next | [Article #5 — Brazil made payments free. I almost added the cost back without noticing](https://www.linkedin.com/pulse/brazil-made-payments-free-i-almost-added-cost-back-without-goulart-xeh8f) |
 
 ## Why this fork
 
